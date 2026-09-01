@@ -20,6 +20,10 @@
 #   save             replace them, reading {"transformations":[...]} on stdin
 #   reset            go back to the ones this plugin ships with
 #   run              transform, reading {"text":..,"prompt":..} on stdin
+#   grab             copy the selection in the active window (a synthetic
+#                    Ctrl+C) and print {"ok":..,"text":..,"window":..}
+#   put              paste over it: {"text":..,"window":..} on stdin puts the
+#                    text on the clipboard, focuses that window, sends Ctrl+V
 
 set -uo pipefail
 
@@ -653,6 +657,28 @@ read_answer() {
   esac
 }
 
+# --- the selection ----------------------------------------------------------
+
+# A window address as hyprctl prints one, and nothing else. The address ends up
+# inside a dispatch call, so anything that is not plain hex is refused rather
+# than passed along, however it got here.
+valid_window() { [[ "$1" =~ ^0x[0-9a-f]{1,16}$ ]]; }
+
+# The lua dispatch form, because Quattro's Hyprland parses dispatches as lua
+# and the classic comma syntax is refused. The address is validated above, so
+# nothing but hex ever lands inside the string. hyprctl exits zero even when
+# the window is gone and says so in prose instead, so the caller reads the
+# output rather than the status.
+dispatch_to_window() {
+  local call="$1" window="$2"
+  hyprctl dispatch "hl.dsp.$call({window=\"address:$window\"})" 2>&1
+}
+
+send_key_to_window() {
+  local key="$1" window="$2"
+  hyprctl dispatch "hl.dsp.send_shortcut({mods=\"CTRL\", key=\"$key\", window=\"address:$window\"})" 2>&1
+}
+
 # --- commands ---------------------------------------------------------------
 
 read_request() {
@@ -699,7 +725,72 @@ run)
   run_transform "$instruction" "$text"
   ;;
 
+grab)
+  command -v wl-paste >/dev/null 2>&1 || die "wl-clipboard is not installed"
+  command -v hyprctl >/dev/null 2>&1 || die "hyprctl is not available"
+
+  addr="$(hyprctl -j activewindow 2>/dev/null | jq -r '.address // ""')"
+  valid_window "$addr" || die "Could not tell which window is active"
+
+  # The clipboard is cleared first so a fresh copy is tellable from whatever
+  # was already on it: a selection identical to the old clipboard would
+  # otherwise read as a copy that never happened, and no selection at all
+  # would read as a copy of the old clipboard. What was there goes back if
+  # the copy comes to nothing.
+  old="$(wl-paste --no-newline 2>/dev/null | head -c "$MAX_REQUEST_BYTES")"
+  wl-copy --clear 2>/dev/null
+
+  # The Ctrl+C is sent more than once. This runs off a keybinding, and while
+  # the keys of that binding are still physically held the app reads the
+  # synthetic Ctrl+C together with those modifiers and copies nothing
+  # (measured, not theory). The first attempt that lands after the fingers
+  # lift is the one that fills the clipboard, and an extra Ctrl+C into an app
+  # that already copied is harmless.
+  text=""
+  for _ in 1 2 3; do
+    send_key_to_window C "$addr" >/dev/null
+    for _ in $(seq 1 8); do
+      sleep 0.1
+      text="$(wl-paste --no-newline 2>/dev/null | head -c "$MAX_REQUEST_BYTES")"
+      [[ -n "$text" ]] && break 2
+    done
+  done
+
+  if [[ -z "${text//[[:space:]]/}" ]]; then
+    [[ -n "$old" ]] && printf '%s' "$old" | wl-copy 2>/dev/null
+    die "Nothing was copied. Is any text selected?"
+  fi
+
+  jq -nc --arg text "$text" --arg window "$addr" '{ok: true, text: $text, window: $window}'
+  ;;
+
+put)
+  command -v wl-copy >/dev/null 2>&1 || die "wl-clipboard is not installed"
+  command -v hyprctl >/dev/null 2>&1 || die "hyprctl is not available"
+
+  request="$(read_request)"
+  text="$(printf '%s' "$request" | jq -r '.text // ""')"
+  window="$(printf '%s' "$request" | jq -r '.window // ""')"
+  [[ -n "${text//[[:space:]]/}" ]] || die "Nothing to paste"
+  valid_window "$window" || die "No window to paste into"
+
+  # The clipboard first, so even a window that has since closed still leaves
+  # the answer somewhere the person can get at it.
+  printf '%s' "$text" | wl-copy 2>/dev/null || die "Could not copy the answer"
+
+  # The window has to be focused before the paste: on Wayland a window
+  # without keyboard focus never receives the clipboard offer, so a Ctrl+V
+  # sent to it lands but pastes nothing. hyprctl reports a window that is
+  # gone as a warning in prose with a zero exit, hence the grep.
+  if dispatch_to_window focus "$window" | grep -qi 'not found'; then
+    die "That window is gone. The answer is on your clipboard"
+  fi
+  sleep 0.3
+  send_key_to_window V "$window" >/dev/null
+  jq -nc '{ok: true}'
+  ;;
+
 *)
-  die "Usage: text-transform [agent|list|save|reset|run]"
+  die "Usage: text-transform [agent|list|save|reset|run|grab|put]"
   ;;
 esac

@@ -88,6 +88,22 @@ o.bind("SUPER + SHIFT + V", "Transform clipboard", "omarchy-shell jankeesvw.text
 
 That opens the panel with the clipboard already in the input box and the run button focused, so it is one key to open and Enter to go. It uses the last transformation you picked, which is usually the one you want again.
 
+If even that Enter is one key too many, there is also a binding that presses the button for you:
+
+```lua
+o.bind("SUPER + SHIFT + T", "Transform clipboard now", "omarchy-shell jankeesvw.text-transform transform")
+```
+
+That runs the last-used transformation on the clipboard the moment you press it, and when the answer has been copied the panel closes itself again: one key, a few seconds, and the result is ready to paste. The panel still opens while it works, so you can see the spinner and stop it, and if something goes wrong it stays open with the error instead of disappearing on you.
+
+And the whole loop in one key, without even the copy and the paste:
+
+```lua
+o.bind("SUPER + SHIFT + R", "Transform selection in place", "omarchy-shell jankeesvw.text-transform replace")
+```
+
+Select some text anywhere, press the key, and a few seconds later the selection has been replaced by the transformed version. Under the hood the plugin sends the window a Ctrl+C, transforms what came back, and sends a Ctrl+V with the answer on the clipboard; the window is remembered by address, so the paste finds it even if you switched away while the agent was thinking. The panel opens while it works, exactly as above. Two honest caveats: it takes your clipboard (the answer is on it afterwards, which is also your safety net if the paste cannot land), and it assumes the app treats Ctrl+C and Ctrl+V as copy and paste, which terminals for example do not.
+
 ## Removing it
 
 ```bash
@@ -111,6 +127,8 @@ bin/text-transform list
 printf '%s' '{"text":"hallo wereld","prompt":"Translate to English."}' \
   | bin/text-transform run
 ```
+
+Two more exist for the replace flow: `grab` copies the selection out of the active window and prints it, `put` takes `{"text":..,"window":..}` on stdin and pastes it into that window. Both lean on hyprctl, so they are Hyprland-only.
 
 ## Licence
 
