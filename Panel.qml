@@ -177,6 +177,21 @@ Panel {
   // box. Then the whole thing is one key to open and one to go.
   property bool openedForClipboard: false
 
+  // The `transform` IPC method goes one further than `paste`: it also presses
+  // the button. The first flag makes the paste that comes back start the run;
+  // the second closes the panel again when the answer lands, since the result
+  // is on the clipboard by then and there is nothing left to look at. A
+  // failure clears it instead, so the panel stays open on the error.
+  property bool transformOnPaste: false
+  property bool closeWhenDone: false
+
+  // The `replace` IPC method goes further still: it copies the selection out
+  // of the active window itself, transforms it, and pastes the answer back
+  // over the selection. The window is remembered by address so the paste finds
+  // it even if the focus moved while the agent was thinking.
+  property bool replaceWhenDone: false
+  property string replaceWindow: ""
+
   // What the `paste` IPC method does: open, fill the input from the clipboard,
   // and leave the cursor on the button. The paste is a process, so the focus
   // cannot be set here; pasteProc does it when the text actually arrives.
@@ -196,6 +211,48 @@ Panel {
     openedForClipboard = true
     if (!opened) open()
     pasteInput()
+  }
+
+  // What the `transform` IPC method does: everything `paste` does, and then
+  // run the last-used transformation on it without waiting for Enter. The
+  // panel opens so the spinner and a possible error have somewhere to be seen.
+  function transformClipboard() {
+    var chosen = bar && typeof bar.findPanelWidget === "function"
+      ? bar.findPanelWidget(moduleName)
+      : null
+    if (chosen && chosen !== root && typeof chosen.transformClipboard === "function") {
+      chosen.transformClipboard()
+      return
+    }
+    // A second press while a run is going opens the panel on the spinner
+    // instead of quietly queueing nothing.
+    if (busy) {
+      if (!opened) open()
+      return
+    }
+    transformOnPaste = true
+    pasteAndArm()
+  }
+
+  // What the `replace` IPC method does: copy the selection out of the window
+  // the keybinding was pressed in, transform it, and paste the answer back
+  // over it. The grab has to run before the panel opens, because the panel
+  // takes the keyboard focus and the copy needs it where the selection is;
+  // grabProc opens the panel when the text is in.
+  function replaceSelection() {
+    var chosen = bar && typeof bar.findPanelWidget === "function"
+      ? bar.findPanelWidget(moduleName)
+      : null
+    if (chosen && chosen !== root && typeof chosen.replaceSelection === "function") {
+      chosen.replaceSelection()
+      return
+    }
+    if (busy) {
+      if (!opened) open()
+      return
+    }
+    if (grabProc.running) return
+    grabProc.running = true
   }
 
   // Send the answer back up to the input, so it can be run through another
@@ -318,6 +375,14 @@ Panel {
     if (settingsOpen) saveSettings()
     dropdown.close()
     errorText = ""
+    // Closing by hand takes over from a `transform` or `replace` keybinding:
+    // the answer still lands on the clipboard, but it must not close a panel
+    // that was reopened in the meantime, or paste into an app someone has
+    // moved on from.
+    transformOnPaste = false
+    closeWhenDone = false
+    replaceWhenDone = false
+    replaceWindow = ""
     controller.hide()
   }
 
@@ -378,6 +443,9 @@ Panel {
         root.busy = false
         if (root.cancelled) {
           root.cancelled = false
+          root.closeWhenDone = false
+          root.replaceWhenDone = false
+          root.replaceWindow = ""
           return
         }
         var payload
@@ -385,23 +453,48 @@ Panel {
           payload = JSON.parse(text)
         } catch (e) {
           root.errorText = "Could not read the answer"
+          root.closeWhenDone = false
+          root.replaceWhenDone = false
+          root.replaceWindow = ""
           return
         }
+        var replace = false
+        var replaceTarget = ""
         if (payload && payload.ok === true) {
           root.outputText = String(payload.output || "")
           root.errorText = ""
 
-          // Straight onto the clipboard. Transforming text is a step on the
-          // way to pasting it somewhere else, so making that a second click
-          // only adds a click. The copy button stays for a second helping.
-          root.copyOutput()
+          if (root.replaceWhenDone) {
+            // The answer goes back over the selection instead of only onto
+            // the clipboard; putProc is started below, after the panel has
+            // closed and the keyboard is back with the app. The window goes
+            // into a local now, because the close on the way there wipes the
+            // property: that wipe is what stops a manual close from pasting,
+            // and this run has already earned its paste.
+            root.replaceWhenDone = false
+            replaceTarget = root.replaceWindow
+            root.replaceWindow = ""
+            replace = true
+          } else {
+            // Straight onto the clipboard. Transforming text is a step on the
+            // way to pasting it somewhere else, so making that a second click
+            // only adds a click. The copy button stays for a second helping.
+            root.copyOutput()
 
-          // Said out loud even with the panel open, because the clipboard is
-          // the part you cannot see. The text itself stays out of it: a
-          // notification can end up on a lock screen.
-          root.notify("Text Transform", "Transformed and copied to your clipboard")
+            // Said out loud even with the panel open, because the clipboard is
+            // the part you cannot see. The text itself stays out of it: a
+            // notification can end up on a lock screen.
+            root.notify("Text Transform", "Transformed and copied to your clipboard")
+          }
         } else {
           root.errorText = String((payload && payload.error) || "Something went wrong")
+
+          // A run that was going to close the panel keeps it open instead:
+          // closing on a failure would hide the one thing worth reading. The
+          // same goes for pasting: a failure replaces nothing.
+          root.closeWhenDone = false
+          root.replaceWhenDone = false
+          root.replaceWindow = ""
 
           // A failure with the panel open is already on screen in red, so
           // only tell the people who walked away.
@@ -412,7 +505,24 @@ Panel {
 
         // The run outlives the panel on purpose, so a result can arrive with
         // nobody looking, and the bar has to keep saying so until it is seen.
-        if (!root.opened) root.resultWaiting = true
+        // A replace delivers its result into the app, so nothing is waiting.
+        if (!root.opened && !replace) root.resultWaiting = true
+
+        // After the waiting check, not before: a panel that closes itself has
+        // delivered its result, so the bar must not keep signalling one.
+        if (root.closeWhenDone) {
+          root.closeWhenDone = false
+          if (root.opened) root.close()
+        }
+
+        // And only now the paste: on Wayland the clipboard offer follows the
+        // keyboard focus, so the panel has to be out of the way before the
+        // window the answer is going into gets its Ctrl+V.
+        if (replace) {
+          putProc.request = JSON.stringify({ text: root.outputText, window: replaceTarget })
+          putProc.stdinEnabled = true
+          putProc.running = true
+        }
       }
     }
     onExited: {
@@ -440,9 +550,11 @@ Panel {
     stdout: StdioCollector {
       onStreamFinished: {
         // Whatever happens next, the clipboard opening is over: an empty
-        // clipboard must not leave the flag set for the next ordinary paste.
+        // clipboard must not leave the flags set for the next ordinary paste.
         var arm = root.openedForClipboard
+        var go = root.transformOnPaste
         root.openedForClipboard = false
+        root.transformOnPaste = false
         if (text === "") return
         root.inputText = text
         inputField.text = text
@@ -452,6 +564,75 @@ Panel {
         // one and takes it back.
         if (arm) Qt.callLater(function() { runButton.forceActiveFocus() })
         else inputField.forceActiveFocus()
+        // Auto-close is promised only once the run actually starts: if the
+        // agent is not ready the panel stays open saying why, exactly as it
+        // would after a manual paste.
+        if (go && root.canRun) {
+          root.closeWhenDone = true
+          root.runTransform()
+        }
+      }
+    }
+  }
+
+  // The selection grab for `replace`: a synthetic Ctrl+C into the active
+  // window, the clipboard read back, all done by the script. Only when the
+  // text is in does the panel open, so the copy happened while the app still
+  // had the keyboard.
+  Process {
+    id: grabProc
+    command: [root.script, "grab"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var payload
+        try { payload = JSON.parse(text) } catch (e) { payload = null }
+        if (!payload || payload.ok !== true) {
+          if (!root.opened) root.open()
+          root.errorText = String((payload && payload.error) || "Could not copy the selection")
+          return
+        }
+        root.replaceWindow = String(payload.window || "")
+        root.inputText = String(payload.text || "")
+        inputField.text = root.inputText
+        inputField.cursorPosition = root.inputText.length
+        if (!root.opened) root.open()
+        Qt.callLater(function() { runButton.forceActiveFocus() })
+        if (root.canRun) {
+          root.closeWhenDone = true
+          root.replaceWhenDone = true
+          root.runTransform()
+        }
+        // Not ready to run (no agent, say): the panel is now open and already
+        // explains why, exactly as it would after a manual paste.
+      }
+    }
+  }
+
+  // The paste back for `replace`. The script puts the answer on the clipboard,
+  // focuses the remembered window and sends it Ctrl+V; the text goes in over
+  // stdin like everywhere else.
+  Process {
+    id: putProc
+    property string request: ""
+    command: [root.script, "put"]
+    stdinEnabled: true
+    onStarted: {
+      write(request)
+      request = ""
+      stdinEnabled = false
+    }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var payload
+        try { payload = JSON.parse(text) } catch (e) { payload = null }
+        if (payload && payload.ok === true) {
+          root.notify("Text Transform", "Transformed and pasted over your selection")
+        } else {
+          // The script copies before it pastes, so even here the answer is
+          // safe on the clipboard and the notification can say so.
+          root.notify("Text Transform",
+                      String((payload && payload.error) || "Could not paste. The answer is on your clipboard"))
+        }
       }
     }
   }
@@ -471,12 +652,23 @@ Panel {
 
   Process { id: notifyProc }
 
-  // The five Panel would have registered, plus the one this panel adds.
+  // The five Panel would have registered, plus the three this panel adds.
   //
   //   omarchy-shell jankeesvw.text-transform paste
   //
   // opens on whatever is on the clipboard with the run button focused, which
   // makes a keybinding one key to open and one to go.
+  //
+  //   omarchy-shell jankeesvw.text-transform transform
+  //
+  // presses the button too: the last-used transformation runs on the clipboard
+  // straight away, and the panel closes itself once the answer is copied.
+  //
+  //   omarchy-shell jankeesvw.text-transform replace
+  //
+  // starts from the selection instead of the clipboard: it copies what is
+  // selected in the active window, transforms it, and pastes the answer back
+  // over the selection.
   IpcHandler {
     target: root.ipcTarget
 
@@ -486,6 +678,8 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function paste(): void { root.pasteAndArm() }
+    function transform(): void { root.transformClipboard() }
+    function replace(): void { root.replaceSelection() }
   }
 
   ListModel { id: draft }
