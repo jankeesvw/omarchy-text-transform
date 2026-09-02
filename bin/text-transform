@@ -75,15 +75,18 @@ defaults_json() {
 [
   {
     "name": "Fix typos",
-    "prompt": "Correct the spelling, grammar and punctuation. The language of the text never changes: whatever it is written in, it stays in, and no part of it is ever translated. The single exception is a stray word or phrase left behind in another language, which goes into the language the text as a whole is in. Keep the wording and tone as they are: only fix what is actually wrong."
+    "prompt": "Correct the spelling, grammar and punctuation. The language of the text never changes: whatever it is written in, it stays in, and no part of it is ever translated. The single exception is a stray word or phrase left behind in another language, which goes into the language the text as a whole is in. Keep the wording and tone as they are: only fix what is actually wrong.",
+    "autoCopy": true
   },
   {
     "name": "Make it shorter",
-    "prompt": "Rewrite this to be significantly shorter while keeping every point that matters. Same language, same tone."
+    "prompt": "Rewrite this to be significantly shorter while keeping every point that matters. Same language, same tone.",
+    "autoCopy": true
   },
   {
     "name": "Translate to Dutch",
-    "prompt": "Translate this into Dutch that reads as if it was written in Dutch to begin with. Keep the tone and register of the original, but not its sentence structure: rebuild the sentences the way a Dutch speaker would build them, and use the ordinary Dutch word for what is meant rather than the literal translation. Leave names, quotes and technical terms alone. If a part of the text is already Dutch, leave it as it is."
+    "prompt": "Translate this into Dutch that reads as if it was written in Dutch to begin with. Keep the tone and register of the original, but not its sentence structure: rebuild the sentences the way a Dutch speaker would build them, and use the ordinary Dutch word for what is meant rather than the literal translation. Leave names, quotes and technical terms alone. If a part of the text is already Dutch, leave it as it is.",
+    "autoCopy": true
   }
 ]
 JSON
@@ -141,7 +144,8 @@ clean_transformations() {
     [ (if type == "array" then .[] else empty end)
       | select(type == "object")
       | { name: ((.name // "") | tostring | gsub("^\\s+|\\s+$"; "") | .[0:60]),
-          prompt: ((.prompt // "") | tostring | gsub("^\\s+|\\s+$"; "") | .[0:4000]) }
+          prompt: ((.prompt // "") | tostring | gsub("^\\s+|\\s+$"; "") | .[0:4000]),
+          autoCopy: (if .autoCopy == false then false else true end) }
       | select(.name != "" and .prompt != "") ]
   ' 2>/dev/null
 }
