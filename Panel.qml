@@ -61,7 +61,7 @@ Panel {
   readonly property color accent: Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  // [{ name, prompt }], as the script hands them over.
+  // [{ name, prompt, autoCopy }], as the script hands them over.
   property var transformations: []
   property int selectedIndex: 0
   property string inputText: ""
@@ -69,6 +69,9 @@ Panel {
   property string errorText: ""
   property bool busy: false
   property bool copied: false
+  // Captured at the start of a run, so editing settings while it is running
+  // cannot change what happens to that answer.
+  property bool runningAutoCopy: true
   // A result that landed while the panel was closed, so the bar can say so.
   property bool resultWaiting: false
   // Set while a stop is on its way, so the empty answer that follows is read
@@ -142,6 +145,7 @@ Panel {
     outputText = ""
     copied = false
     cancelled = false
+    runningAutoCopy = currentTransformation.autoCopy !== false
     busy = true
     runProc.request = JSON.stringify({
       text: inputText,
@@ -293,7 +297,8 @@ Panel {
     draft.clear()
     for (var i = 0; i < transformations.length; i++) {
       draft.append({ name: String(transformations[i].name),
-                     prompt: String(transformations[i].prompt) })
+                     prompt: String(transformations[i].prompt),
+                     autoCopy: transformations[i].autoCopy !== false })
     }
     settingsOpen = true
 
@@ -305,8 +310,8 @@ Panel {
 
   function updateDraft(index, field, value) {
     if (index < 0 || index >= draft.count) return
-    if (String(draft.get(index)[field]) === String(value)) return
-    draft.setProperty(index, field, String(value))
+    if (draft.get(index)[field] === value) return
+    draft.setProperty(index, field, value)
   }
 
   // Drag the settings window to whatever just took the keyboard. Tabbing to a
@@ -329,7 +334,7 @@ Panel {
   }
 
   function addDraft() {
-    draft.append({ name: "New transformation", prompt: "" })
+    draft.append({ name: "New transformation", prompt: "", autoCopy: true })
 
     // The row does not exist yet: appending to the model builds the delegate
     // after this returns. So scrolling to it and naming it have to wait a
@@ -355,7 +360,8 @@ Panel {
     var list = []
     for (var i = 0; i < draft.count; i++) {
       var item = draft.get(i)
-      list.push({ name: String(item.name), prompt: String(item.prompt) })
+      list.push({ name: String(item.name), prompt: String(item.prompt),
+                  autoCopy: item.autoCopy !== false })
     }
     saveProc.request = JSON.stringify({ transformations: list })
     saveProc.stdinEnabled = true
@@ -475,7 +481,7 @@ Panel {
             replaceTarget = root.replaceWindow
             root.replaceWindow = ""
             replace = true
-          } else {
+          } else if (root.runningAutoCopy) {
             // Straight onto the clipboard. Transforming text is a step on the
             // way to pasting it somewhere else, so making that a second click
             // only adds a click. The copy button stays for a second helping.
@@ -485,6 +491,12 @@ Panel {
             // the part you cannot see. The text itself stays out of it: a
             // notification can end up on a lock screen.
             root.notify("Text Transform", "Transformed and copied to your clipboard")
+          } else {
+            // Questions often need reading rather than pasting. Keep the
+            // answer in the panel and never put it on the clipboard. Unlike
+            // the copy notification, this deliberately carries the result so
+            // someone who has walked away can read the answer there.
+            root.notify("Text Transform", root.plain(root.outputText))
           }
         } else {
           root.errorText = String((payload && payload.error) || "Something went wrong")
@@ -568,7 +580,7 @@ Panel {
         // agent is not ready the panel stays open saying why, exactly as it
         // would after a manual paste.
         if (go && root.canRun) {
-          root.closeWhenDone = true
+          root.closeWhenDone = root.currentTransformation.autoCopy !== false
           root.runTransform()
         }
       }
@@ -1365,6 +1377,7 @@ Panel {
                 required property int index
                 required property string name
                 required property string prompt
+                required property bool autoCopy
 
                 // So addDraft can put the cursor in the row it just made.
                 property alias nameField: nameField
@@ -1391,7 +1404,7 @@ Panel {
                     TextField {
                       id: nameField
                       anchors.left: parent.left
-                      anchors.right: removeButton.left
+                      anchors.right: autoCopyButton.left
                       anchors.rightMargin: Style.space(6)
                       anchors.verticalCenter: parent.verticalCenter
                       text: draftRow.name
@@ -1405,6 +1418,39 @@ Panel {
                       onTextChanged: root.updateDraft(draftRow.index, "name", text)
                       onActiveFocusChanged: {
                         if (activeFocus) root.revealInDrafts(nameField, 0, height)
+                      }
+                    }
+
+                    PanelActionButton {
+                      id: autoCopyButton
+                      anchors.right: removeButton.left
+                      anchors.rightMargin: Style.space(6)
+                      anchors.verticalCenter: parent.verticalCenter
+                      focusable: true
+                      // A copy glyph names the action itself; the slash only
+                      // changes whether that action happens automatically.
+                      iconText: root.iconCopy
+                      tooltipText: draftRow.autoCopy
+                        ? "Copy result to clipboard automatically: on"
+                        : "Copy result to clipboard automatically: off"
+                      foreground: draftRow.autoCopy ? root.accent : root.foreground
+                      hoverColor: root.accent
+                      fontFamily: root.fontFamily
+                      onClicked: root.updateDraft(draftRow.index, "autoCopy", !draftRow.autoCopy)
+                      onActiveFocusChanged: {
+                        if (activeFocus) root.revealInDrafts(autoCopyButton, 0, height)
+                      }
+
+                      // Off is a preference, not an error, so its slash uses
+                      // the normal foreground rather than an urgent colour.
+                      Rectangle {
+                        visible: !draftRow.autoCopy
+                        anchors.centerIn: parent
+                        width: parent.width * 1.1
+                        height: Math.max(1, Style.space(1))
+                        rotation: -45
+                        color: root.foreground
+                        radius: height / 2
                       }
                     }
 

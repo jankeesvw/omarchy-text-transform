@@ -12,13 +12,13 @@ Type or paste into the top box, choose a transformation, and press the arrow (or
 
 Three small buttons do the rest. The one in the input box pastes your clipboard in. In the output box, the up arrow sends the answer back to the top so you can run it through another transformation (shortening something twice is a different thing from asking for it very short once), and the other copies it again.
 
-A transform takes a few seconds. You do not have to sit and watch it: close the panel and carry on, and the arrows in the bar stay lit while the agent works. When the answer lands you get a notification and the text is waiting in the panel next time you open it. The notification says only that it finished and that it is on your clipboard; your text stays out of it, because notifications end up on lock screens.
+A transform takes a few seconds. You do not have to sit and watch it: close the panel and carry on, and the arrows in the bar stay lit while the agent works. When the answer lands you get a notification and the text is waiting in the panel next time you open it. With automatic copy on, the notification says only that it finished and that it is on your clipboard, because notifications end up on lock screens. With automatic copy off, the notification contains the answer so you can read it without reopening the panel.
 
 If it takes too long, the arrow becomes a stop button, and Ctrl+Enter does the same. Stopping kills the agent rather than just hiding the spinner: an agent left thinking is still spending your tokens.
 
 Nothing here needs the mouse. The panel opens with the cursor in the input box; Tab walks both boxes, the dropdown and every button, Enter or space presses whatever is focused, Ctrl+Enter transforms or stops from anywhere, and Escape closes. Bind the panel to a key (see *Installing*) and the whole thing is a keyboard away.
 
-A transformation is just a name and a prompt. The name is what the dropdown shows; the prompt is what the agent is told to do with your text. Press the gear to edit them, add your own, or throw out the ones you never use.
+A transformation is a name, a prompt, and an optional automatic clipboard copy. The name is what the dropdown shows; the prompt is what the agent is told to do with your text. Press the gear to edit them, add your own, or throw out the ones you never use. The copy button beside each prompt is on by default; turn it off for questions whose answers you want to read in the panel without replacing your clipboard.
 
 Three come with it: fix typos, make it shorter, translate to Dutch. That is deliberately not a set of everything you might want; the plugin is worth having because you write the ones you need yourself. "Rewrite this as a commit message", "turn this into English that does not read like a translation", "say this the way I would say it": each of those is a name and a prompt, and then it is a keypress away.
 
@@ -94,7 +94,7 @@ If even that Enter is one key too many, there is also a binding that presses the
 o.bind("SUPER + SHIFT + T", "Transform clipboard now", "omarchy-shell jankeesvw.text-transform transform")
 ```
 
-That runs the last-used transformation on the clipboard the moment you press it, and when the answer has been copied the panel closes itself again: one key, a few seconds, and the result is ready to paste. The panel still opens while it works, so you can see the spinner and stop it, and if something goes wrong it stays open with the error instead of disappearing on you.
+That runs the last-used transformation on the clipboard the moment you press it. When that transformation copies automatically, the panel closes itself again: one key, a few seconds, and the result is ready to paste. If automatic copy is off, it stays open on the answer instead. The panel always opens while it works, so you can see the spinner and stop it, and if something goes wrong it stays open with the error instead of disappearing on you.
 
 And the whole loop in one key, without even the copy and the paste:
 
