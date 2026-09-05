@@ -121,13 +121,18 @@ write_private() {
 
 readable_file() { [[ -f "$1" && ! -L "$1" ]]; }
 
-# Copy a regular file without following a symlink. Missing source is fine.
-# Bounded so a planted huge file at ~/.grok/auth.json cannot fill the workdir.
-copy_regular_bounded() {
+# Point a name in an isolated agent home at a real file in the agent's own
+# config directory. A symlink rather than a copy, because these files are
+# credentials the agent rewrites: an agent that refreshes its token has to
+# land on the real file, or every run starts from a token that was already
+# replaced. They are a couple of kilobytes, so the write never approaches
+# `ulimit -f`; it is the logs that do, and those stay in the isolated home.
+# A source that is missing or is itself a symlink is skipped rather than
+# followed.
+link_regular() {
   local src="$1" dest="$2"
   [[ -f "$src" && ! -L "$src" ]] || return 0
-  dd if="$src" iflag=nofollow,nonblock of="$dest" bs=4096 count=16 2>/dev/null || return 0
-  chmod 600 -- "$dest" 2>/dev/null || true
+  ln -s -- "$src" "$dest" 2>/dev/null || return 0
 }
 
 # The repair half of private_dir, without the mkdir: safe to call on a read,
@@ -343,23 +348,37 @@ build_command() {
     # Same shape as OpenCode's session DB: do not lift the ulimit; keep
     # Grok's state inside the throwaway workdir.
     #
-    # The `grok` on PATH is often a Node trampoline that execs
-    # $GROK_HOME/bin/grok. Pointing GROK_HOME at an empty directory
-    # would then fail to find the binary, so run the native ELF and
-    # put a symlink at grok-home/bin/grok in case something re-execs.
+    # The `grok` on PATH is a Node trampoline, and its resolveBinary() starts
+    # with "if $GROK_HOME/bin/grok exists, exec that". So the one thing this
+    # must never do is put the trampoline at that path inside the isolated
+    # home: it then execs itself, with GROK_HOME inherited, forever. `timeout`
+    # does not save you there, because it kills only the process it started
+    # and the children keep going. Measured: fifteen node processes in ten
+    # seconds, nothing on stderr.
+    #
+    # So only the bootstrapped native binary will do. Without it there is
+    # nothing safe to run, and letting the trampoline bootstrap one itself is
+    # not an option either: it decompresses 166 MB into $GROK_HOME/bin, which
+    # is the same SIGXFSZ this whole branch exists to avoid. Say so instead,
+    # because running grok once by hand is what creates it.
     local grok_home grok_src grok_bin
-    grok_home="$(dirname -- "$outfile")/grok-home"
     grok_src="${GROK_HOME:-$HOME/.grok}"
-    mkdir -p -m 700 -- "$grok_home/bin" || return 1
-    copy_regular_bounded "$grok_src/auth.json" "$grok_home/auth.json"
-    copy_regular_bounded "$grok_src/config.toml" "$grok_home/config.toml"
-    if [[ -x "$grok_src/bin/grok" ]]; then
-      grok_bin="$(readlink -f -- "$grok_src/bin/grok")"
-    else
-      grok_bin="$(command -v grok)" || return 1
+    if [[ ! -x "$grok_src/bin/grok" ]]; then
+      BUILD_ERROR="Grok has not been set up yet. Run grok once in a terminal, then try again."
+      return 1
     fi
+    grok_bin="$(readlink -f -- "$grok_src/bin/grok")" || return 1
+    grok_home="$(dirname -- "$outfile")/grok-home"
+    mkdir -p -m 700 -- "$grok_home/bin" || return 1
+    link_regular "$grok_src/auth.json" "$grok_home/auth.json"
+    link_regular "$grok_src/config.toml" "$grok_home/config.toml"
     ln -s -- "$grok_bin" "$grok_home/bin/grok"
-    CMD=(env GROK_HOME="$grok_home" GROK_DISABLE_AUTOUPDATER=1 "$grok_bin" --tools "" -p "$prompt")
+    # The updater is not a nicety to switch off here: it downloads a new
+    # 166 MB binary into $GROK_HOME/downloads, which under `ulimit -f` is the
+    # very SIGXFSZ this branch exists to avoid. The name is documented in the
+    # binary's own config table, next to `[cli] auto_update`.
+    CMD=(env GROK_HOME="$grok_home" GROK_DISABLE_AUTOUPDATER=1 "$grok_bin"
+      --tools "" -p "$prompt")
     ;;
   copilot)
     USE_STDIN=0
@@ -595,9 +614,14 @@ run_transform() {
 
   CMD=()
   USE_STDIN=1
+  # An agent this plugin cannot drive is the usual reason build_command gives
+  # up, and the generic sentence covers it. An agent it does know but cannot
+  # start right now is a different thing, and the person can act on it, so
+  # that branch says what is wrong in BUILD_ERROR and this hands it over.
+  BUILD_ERROR=""
   build_command "$agent" "$prompt" "$outfile" || {
     rm -rf -- "$workdir"
-    die "Default agent $agent has no non-interactive mode this plugin knows"
+    die "${BUILD_ERROR:-Default agent $agent has no non-interactive mode this plugin knows}"
   }
 
   # Run it as a background job and wait, rather than in a command
