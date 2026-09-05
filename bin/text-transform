@@ -121,6 +121,15 @@ write_private() {
 
 readable_file() { [[ -f "$1" && ! -L "$1" ]]; }
 
+# Copy a regular file without following a symlink. Missing source is fine.
+# Bounded so a planted huge file at ~/.grok/auth.json cannot fill the workdir.
+copy_regular_bounded() {
+  local src="$1" dest="$2"
+  [[ -f "$src" && ! -L "$src" ]] || return 0
+  dd if="$src" iflag=nofollow,nonblock of="$dest" bs=4096 count=16 2>/dev/null || return 0
+  chmod 600 -- "$dest" 2>/dev/null || true
+}
+
 # The repair half of private_dir, without the mkdir: safe to call on a read,
 # where creating the directory would be a side effect nobody asked for. A
 # directory that is not ours, or is a symlink, is left alone rather than
@@ -327,7 +336,30 @@ build_command() {
     ;;
   grok)
     USE_STDIN=0
-    CMD=(grok --tools "" -p "$prompt")
+    # Grok writes under $GROK_HOME (default ~/.grok), including
+    # logs/unified.jsonl. On any machine that has used Grok, that log
+    # is already larger than FILE_LIMIT, so the first append under
+    # `ulimit -f` is SIGXFSZ (kernel send_sig, reported as SI_USER).
+    # Same shape as OpenCode's session DB: do not lift the ulimit; keep
+    # Grok's state inside the throwaway workdir.
+    #
+    # The `grok` on PATH is often a Node trampoline that execs
+    # $GROK_HOME/bin/grok. Pointing GROK_HOME at an empty directory
+    # would then fail to find the binary, so run the native ELF and
+    # put a symlink at grok-home/bin/grok in case something re-execs.
+    local grok_home grok_src grok_bin
+    grok_home="$(dirname -- "$outfile")/grok-home"
+    grok_src="${GROK_HOME:-$HOME/.grok}"
+    mkdir -p -m 700 -- "$grok_home/bin" || return 1
+    copy_regular_bounded "$grok_src/auth.json" "$grok_home/auth.json"
+    copy_regular_bounded "$grok_src/config.toml" "$grok_home/config.toml"
+    if [[ -x "$grok_src/bin/grok" ]]; then
+      grok_bin="$(readlink -f -- "$grok_src/bin/grok")"
+    else
+      grok_bin="$(command -v grok)" || return 1
+    fi
+    ln -s -- "$grok_bin" "$grok_home/bin/grok"
+    CMD=(env GROK_HOME="$grok_home" GROK_DISABLE_AUTOUPDATER=1 "$grok_bin" --tools "" -p "$prompt")
     ;;
   copilot)
     USE_STDIN=0
