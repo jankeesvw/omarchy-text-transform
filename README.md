@@ -53,6 +53,8 @@ Grok and Copilot have no way to take a prompt on stdin, so with those two your t
 
 Ori is a launcher rather than an agent, so it needs Claude Code or Pi installed to have something to launch.
 
+Grok gets a throwaway `GROK_HOME` inside the working directory, because it logs to `logs/unified.jsonl` under that path and on a machine that has used Grok that log is already past the file-size limit every agent runs under, which kills the transform. That means Grok has to have been run once by hand first: the isolated home borrows the binary Grok installs on its first launch, and until that exists the panel says so rather than trying anything clever.
+
 Claude Code runs with `--strict-mcp-config`, which loads no MCP servers. Measured on a normal setup that takes a transform from around 5.8 to 2.9 seconds, because connecting to them is most of what the startup does. Forcing a small model is deliberately *not* done: Haiku measured slower than the default here, since at this length the time goes into starting up rather than generating.
 
 ## Your text and the agent
