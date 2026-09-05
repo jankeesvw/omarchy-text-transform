@@ -163,6 +163,19 @@ Panel {
     runProc.signal(15)   // SIGTERM; the script traps it and takes the agent with it
   }
 
+  // The first line or two of an answer, for a notification. Notifications end
+  // up on lock screens, so the shorter this is the less of it is readable over
+  // someone's shoulder, and a body this long is truncated by the daemon
+  // anyway, at a length nobody here controls.
+  // trimEnd() is ES2019 and QML's engine does not have it: calling it throws a
+  // TypeError, which takes the notification with it and only on the long
+  // answers, so it looks like the notification is flaky rather than broken.
+  function excerpt(s) {
+    var text = root.plain(s).replace(/\s+/g, " ").trim()
+    if (text.length <= 200) return text
+    return text.slice(0, 199).replace(/\s+$/, "") + "\u2026"
+  }
+
   function notify(title, body) {
     notifyProc.command = ["notify-send", "--app-name=Text Transform",
                           "--icon=accessories-text-editor", "--", title, body]
@@ -495,8 +508,11 @@ Panel {
             // Questions often need reading rather than pasting. Keep the
             // answer in the panel and never put it on the clipboard. Unlike
             // the copy notification, this deliberately carries the result so
-            // someone who has walked away can read the answer there.
-            root.notify("Text Transform", root.plain(root.outputText))
+            // someone who has walked away can read the answer there. Only the
+            // opening of it: an answer runs to 128 KiB, a notification that
+            // long is unreadable wherever it lands, and the rest is one click
+            // away in the panel that still has it.
+            root.notify("Text Transform", root.excerpt(root.outputText))
           }
         } else {
           root.errorText = String((payload && payload.error) || "Something went wrong")

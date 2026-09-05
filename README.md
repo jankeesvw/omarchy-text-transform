@@ -12,7 +12,7 @@ Type or paste into the top box, choose a transformation, and press the arrow (or
 
 Three small buttons do the rest. The one in the input box pastes your clipboard in. In the output box, the up arrow sends the answer back to the top so you can run it through another transformation (shortening something twice is a different thing from asking for it very short once), and the other copies it again.
 
-A transform takes a few seconds. You do not have to sit and watch it: close the panel and carry on, and the arrows in the bar stay lit while the agent works. When the answer lands you get a notification and the text is waiting in the panel next time you open it. With automatic copy on, the notification says only that it finished and that it is on your clipboard, because notifications end up on lock screens. With automatic copy off, the notification contains the answer so you can read it without reopening the panel.
+A transform takes a few seconds. You do not have to sit and watch it: close the panel and carry on, and the arrows in the bar stay lit while the agent works. When the answer lands you get a notification and the text is waiting in the panel next time you open it. With automatic copy on, the notification says only that it finished and that it is on your clipboard, because notifications end up on lock screens. With automatic copy off, it carries the first couple of lines of the answer, so you can read the gist of it without reopening the panel; the whole thing is waiting there.
 
 If it takes too long, the arrow becomes a stop button, and Ctrl+Enter does the same. Stopping kills the agent rather than just hiding the spinner: an agent left thinking is still spending your tokens.
 
