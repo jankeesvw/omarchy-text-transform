@@ -204,6 +204,7 @@ agent_label() {
   grok) printf 'Grok' ;;
   agy) printf 'Antigravity' ;;
   copilot) printf 'GitHub Copilot' ;;
+  goose) printf 'Goose' ;;
   ori) printf 'Ori' ;;
   *) printf '%s' "$1" ;;
   esac
@@ -279,6 +280,8 @@ ori_harness() {
 #   ori       passes its arguments to claude or pi untouched, so it inherits
 #   grok      --tools ""            allow-list of built-in tools
 #   copilot   --available-tools=""  "only these tools will be available"
+#   goose     --no-profile          loads none of the configured extensions,
+#                                   and none are added on the CLI
 #
 # One switch each, so a tool added by an update is off without this list being
 # touched. OpenCode's switch is a config key rather than a flag, and it is
@@ -388,6 +391,36 @@ build_command() {
     USE_STDIN=0
     CMD=(copilot --no-color --log-level none --available-tools="" --no-ask-user -p "$prompt")
     ;;
+  goose)
+    # --no-profile is the switch: none of the configured extensions load, and
+    # the only extensions a run could get are CLI-specified, of which there
+    # are none. Asked what tools it had, a run under these flags answers
+    # "none". GOOSE_MODE=chat sits under it as the second layer, the way the
+    # codex read-only sandbox does: even a tool that appeared anyway would
+    # not be executed.
+    #
+    # Goose keeps its own state in XDG_DATA_HOME (a sessions sqlite database)
+    # and XDG_STATE_HOME (full request and response logs), and on a machine
+    # that has used goose the database alone is already past the `ulimit -f`
+    # below, so the first write would be refused. Same shape as Grok's home:
+    # the state is redirected into the throwaway working directory, where it
+    # is new, and it leaves with the directory afterwards. That also keeps
+    # the text out of goose's persistent request logs, which it otherwise
+    # writes.
+    #
+    # Unlike Grok, goose's state keeps growing once redirected: the database
+    # and the logs scale with the text, and a measured run with 180 KB of it
+    # wrote 920 KB of state. Under the limit today, over it at the largest
+    # input this plugin accepts, so the limit is raised for goose alone.
+    # Everything it bounds lands in the directory that is deleted, so what it
+    # bounds is the disk for three minutes, not what survives the run.
+    local wd
+    wd="$(dirname -- "$outfile")"
+    [[ -d "$wd" ]] || return 1
+    FILE_LIMIT=8192
+    CMD=(env XDG_DATA_HOME="$wd/data" XDG_STATE_HOME="$wd/state" GOOSE_MODE=chat
+      goose run --no-profile --no-session --quiet -i -)
+    ;;
   *)
     return 1
     ;;
@@ -401,7 +434,7 @@ build_command() {
 # there and missing here would run with whatever tools it has.
 agent_supported() {
   case "$1" in
-  claude | codex | opencode | pi | omp | ori | grok | copilot) return 0 ;;
+  claude | codex | opencode | pi | omp | ori | grok | copilot | goose) return 0 ;;
   *) return 1 ;;
   esac
 }

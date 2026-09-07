@@ -25,7 +25,7 @@ Three come with it: fix typos, make it shorter, translate to Dutch. That is deli
 ## Requirements
 
 - Omarchy Quattro (4.x)
-- A default agent: `omarchy default agent claude` (or `codex`, `opencode`, `crush`, `pi`, `omp`, `grok`, `agy`, `copilot`, `ori`)
+- A default agent: `omarchy default agent claude` (or `codex`, `opencode`, `crush`, `pi`, `omp`, `grok`, `goose`, `agy`, `copilot`, `ori`)
 - `jq`, and `wl-copy` for the copy button (both standard on Omarchy)
 
 If no default agent is set, the panel says so instead of failing quietly.
@@ -41,21 +41,24 @@ The text you transform is untrusted: it comes off a clipboard, and a language mo
 | Codex | every tool-bearing feature off by config | stdin |
 | Pi | `--no-tools` | stdin |
 | Oh My Pi | `--no-tools` | stdin |
+| Goose | `--no-profile` | stdin |
 | Ori | inherited from claude or pi | stdin |
 | Grok | `--tools ""` | argument |
 | GitHub Copilot | `--available-tools=""` | argument |
 
-Six of those are a single switch that means "no tools", so a tool added by an update is off without this plugin being changed. OpenCode's switch is a config key rather than a flag, passed inline through `OPENCODE_CONFIG_CONTENT` so it does not depend on your own config, and `--pure` skips external plugins on top of that. Because that config travels in the environment and can be ignored without saying so, the plugin asks OpenCode what the agent resolved to and refuses the run unless every tool comes back off. Codex is the exception: it has no such switch, and instead each of its tool-bearing features is turned off by name, with the read-only sandbox under it as a second layer. That list needs revisiting when Codex ships a new feature.
+Seven of those are a single switch that means "no tools", so a tool added by an update is off without this plugin being changed. OpenCode's switch is a config key rather than a flag, passed inline through `OPENCODE_CONFIG_CONTENT` so it does not depend on your own config, and `--pure` skips external plugins on top of that. Because that config travels in the environment and can be ignored without saying so, the plugin asks OpenCode what the agent resolved to and refuses the run unless every tool comes back off. Codex is the exception: it has no such switch, and instead each of its tool-bearing features is turned off by name, with the read-only sandbox under it as a second layer. That list needs revisiting when Codex ships a new feature.
 
 **Crush and Antigravity are refused.** Not because they are worse, but because neither can be told to run without tools from the command line: Crush's `run` has no tool flag, and Antigravity has a blanket `--sandbox` that restricts the terminal rather than removing tools. If one of those is your default agent, the panel says so and transforms nothing.
 
-Grok and Copilot have no way to take a prompt on stdin, so with those two your text is briefly visible in the process list to other accounts on the machine. The other six never put it there. If that matters on your machine, pick one of the six.
+Grok and Copilot have no way to take a prompt on stdin, so with those two your text is briefly visible in the process list to other accounts on the machine. The other seven never put it there. If that matters on your machine, pick one of the seven.
 
 Ori is a launcher rather than an agent, so it needs Claude Code or Pi installed to have something to launch.
 
 Grok gets a throwaway `GROK_HOME` inside the working directory, because it logs to `logs/unified.jsonl` under that path and on a machine that has used Grok that log is already past the file-size limit every agent runs under, which kills the transform. That means Grok has to have been run once by hand first: the isolated home borrows the binary Grok installs on its first launch, and until that exists the panel says so rather than trying anything clever.
 
 Claude Code runs with `--strict-mcp-config`, which loads no MCP servers. Measured on a normal setup that takes a transform from around 5.8 to 2.9 seconds, because connecting to them is most of what the startup does. Forcing a small model is deliberately *not* done: Haiku measured slower than the default here, since at this length the time goes into starting up rather than generating.
+
+Goose runs with `--no-profile`, which loads none of the configured extensions, and the only extensions a run could still get are ones passed on the command line, of which there are none. Asked what tools it had, a run under those flags answers "none". `GOOSE_MODE=chat` sits under it as a second layer: even a tool that appeared anyway would not be executed. Goose gets the same treatment as Grok: its state — a sessions database and full request logs — is pointed into the throwaway working directory and leaves with it. Where Grok's logs are over the file-size limit before the run starts, goose's grow with the text, and at the largest transform this plugin accepts they come near enough to the limit that the limit is raised for goose alone; everything it bounds is deleted with the directory afterwards. A side effect worth having: the text you transform never reaches goose's request logs, which it otherwise writes.
 
 ## Your text and the agent
 
