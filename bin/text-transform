@@ -417,8 +417,16 @@ build_command() {
     local wd
     wd="$(dirname -- "$outfile")"
     [[ -d "$wd" ]] || return 1
+    #
+    # GOOSE_TELEMETRY_OFF: a throwaway run has no business reporting itself,
+    # and goose asks for telemetry consent on first use. Measured on 1.51.0 a
+    # run without a terminal does not stop for that question, so this is not
+    # what keeps the panel working today; it is what keeps a run quiet on a
+    # machine that said yes, and keeps the question from ever reaching a run
+    # that cannot answer it.
     FILE_LIMIT=8192
     CMD=(env XDG_DATA_HOME="$wd/data" XDG_STATE_HOME="$wd/state" GOOSE_MODE=chat
+      GOOSE_TELEMETRY_OFF=1
       goose run --no-profile --no-session --quiet -i -)
     ;;
   *)
