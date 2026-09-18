@@ -75,15 +75,18 @@ defaults_json() {
 [
   {
     "name": "Fix typos",
-    "prompt": "Correct the spelling, grammar and punctuation. The language of the text never changes: whatever it is written in, it stays in, and no part of it is ever translated. The single exception is a stray word or phrase left behind in another language, which goes into the language the text as a whole is in. Keep the wording and tone as they are: only fix what is actually wrong."
+    "prompt": "Correct the spelling, grammar and punctuation. The language of the text never changes: whatever it is written in, it stays in, and no part of it is ever translated. The single exception is a stray word or phrase left behind in another language, which goes into the language the text as a whole is in. Keep the wording and tone as they are: only fix what is actually wrong.",
+    "autoCopy": true
   },
   {
     "name": "Make it shorter",
-    "prompt": "Rewrite this to be significantly shorter while keeping every point that matters. Same language, same tone."
+    "prompt": "Rewrite this to be significantly shorter while keeping every point that matters. Same language, same tone.",
+    "autoCopy": true
   },
   {
     "name": "Translate to Dutch",
-    "prompt": "Translate this into Dutch that reads as if it was written in Dutch to begin with. Keep the tone and register of the original, but not its sentence structure: rebuild the sentences the way a Dutch speaker would build them, and use the ordinary Dutch word for what is meant rather than the literal translation. Leave names, quotes and technical terms alone. If a part of the text is already Dutch, leave it as it is."
+    "prompt": "Translate this into Dutch that reads as if it was written in Dutch to begin with. Keep the tone and register of the original, but not its sentence structure: rebuild the sentences the way a Dutch speaker would build them, and use the ordinary Dutch word for what is meant rather than the literal translation. Leave names, quotes and technical terms alone. If a part of the text is already Dutch, leave it as it is.",
+    "autoCopy": true
   }
 ]
 JSON
@@ -121,6 +124,20 @@ write_private() {
 
 readable_file() { [[ -f "$1" && ! -L "$1" ]]; }
 
+# Point a name in an isolated agent home at a real file in the agent's own
+# config directory. A symlink rather than a copy, because these files are
+# credentials the agent rewrites: an agent that refreshes its token has to
+# land on the real file, or every run starts from a token that was already
+# replaced. They are a couple of kilobytes, so the write never approaches
+# `ulimit -f`; it is the logs that do, and those stay in the isolated home.
+# A source that is missing or is itself a symlink is skipped rather than
+# followed.
+link_regular() {
+  local src="$1" dest="$2"
+  [[ -f "$src" && ! -L "$src" ]] || return 0
+  ln -s -- "$src" "$dest" 2>/dev/null || return 0
+}
+
 # The repair half of private_dir, without the mkdir: safe to call on a read,
 # where creating the directory would be a side effect nobody asked for. A
 # directory that is not ours, or is a symlink, is left alone rather than
@@ -141,7 +158,8 @@ clean_transformations() {
     [ (if type == "array" then .[] else empty end)
       | select(type == "object")
       | { name: ((.name // "") | tostring | gsub("^\\s+|\\s+$"; "") | .[0:60]),
-          prompt: ((.prompt // "") | tostring | gsub("^\\s+|\\s+$"; "") | .[0:4000]) }
+          prompt: ((.prompt // "") | tostring | gsub("^\\s+|\\s+$"; "") | .[0:4000]),
+          autoCopy: (if .autoCopy == false then false else true end) }
       | select(.name != "" and .prompt != "") ]
   ' 2>/dev/null
 }
@@ -186,6 +204,7 @@ agent_label() {
   grok) printf 'Grok' ;;
   agy) printf 'Antigravity' ;;
   copilot) printf 'GitHub Copilot' ;;
+  goose) printf 'Goose' ;;
   ori) printf 'Ori' ;;
   *) printf '%s' "$1" ;;
   esac
@@ -261,6 +280,8 @@ ori_harness() {
 #   ori       passes its arguments to claude or pi untouched, so it inherits
 #   grok      --tools ""            allow-list of built-in tools
 #   copilot   --available-tools=""  "only these tools will be available"
+#   goose     --no-profile          loads none of the configured extensions,
+#                                   and none are added on the CLI
 #
 # One switch each, so a tool added by an update is off without this list being
 # touched. OpenCode's switch is a config key rather than a flag, and it is
@@ -327,11 +348,86 @@ build_command() {
     ;;
   grok)
     USE_STDIN=0
-    CMD=(grok --tools "" -p "$prompt")
+    # Grok writes under $GROK_HOME (default ~/.grok), including
+    # logs/unified.jsonl. On any machine that has used Grok, that log
+    # is already larger than FILE_LIMIT, so the first append under
+    # `ulimit -f` is SIGXFSZ (kernel send_sig, reported as SI_USER).
+    # Same shape as OpenCode's session DB: do not lift the ulimit; keep
+    # Grok's state inside the throwaway workdir.
+    #
+    # The `grok` on PATH is a Node trampoline, and its resolveBinary() starts
+    # with "if $GROK_HOME/bin/grok exists, exec that". So the one thing this
+    # must never do is put the trampoline at that path inside the isolated
+    # home: it then execs itself, with GROK_HOME inherited, forever. `timeout`
+    # does not save you there, because it kills only the process it started
+    # and the children keep going. Measured: fifteen node processes in ten
+    # seconds, nothing on stderr.
+    #
+    # So only the bootstrapped native binary will do. Without it there is
+    # nothing safe to run, and letting the trampoline bootstrap one itself is
+    # not an option either: it decompresses 166 MB into $GROK_HOME/bin, which
+    # is the same SIGXFSZ this whole branch exists to avoid. Say so instead,
+    # because running grok once by hand is what creates it.
+    local grok_home grok_src grok_bin
+    grok_src="${GROK_HOME:-$HOME/.grok}"
+    if [[ ! -x "$grok_src/bin/grok" ]]; then
+      BUILD_ERROR="Grok has not been set up yet. Run grok once in a terminal, then try again."
+      return 1
+    fi
+    grok_bin="$(readlink -f -- "$grok_src/bin/grok")" || return 1
+    grok_home="$(dirname -- "$outfile")/grok-home"
+    mkdir -p -m 700 -- "$grok_home/bin" || return 1
+    link_regular "$grok_src/auth.json" "$grok_home/auth.json"
+    link_regular "$grok_src/config.toml" "$grok_home/config.toml"
+    ln -s -- "$grok_bin" "$grok_home/bin/grok"
+    # The updater is not a nicety to switch off here: it downloads a new
+    # 166 MB binary into $GROK_HOME/downloads, which under `ulimit -f` is the
+    # very SIGXFSZ this branch exists to avoid. The name is documented in the
+    # binary's own config table, next to `[cli] auto_update`.
+    CMD=(env GROK_HOME="$grok_home" GROK_DISABLE_AUTOUPDATER=1 "$grok_bin"
+      --tools "" -p "$prompt")
     ;;
   copilot)
     USE_STDIN=0
     CMD=(copilot --no-color --log-level none --available-tools="" --no-ask-user -p "$prompt")
+    ;;
+  goose)
+    # --no-profile is the switch: none of the configured extensions load, and
+    # the only extensions a run could get are CLI-specified, of which there
+    # are none. Asked what tools it had, a run under these flags answers
+    # "none". GOOSE_MODE=chat sits under it as the second layer, the way the
+    # codex read-only sandbox does: even a tool that appeared anyway would
+    # not be executed.
+    #
+    # Goose keeps its own state in XDG_DATA_HOME (a sessions sqlite database)
+    # and XDG_STATE_HOME (full request and response logs), and on a machine
+    # that has used goose the database alone is already past the `ulimit -f`
+    # below, so the first write would be refused. Same shape as Grok's home:
+    # the state is redirected into the throwaway working directory, where it
+    # is new, and it leaves with the directory afterwards. That also keeps
+    # the text out of goose's persistent request logs, which it otherwise
+    # writes.
+    #
+    # Unlike Grok, goose's state keeps growing once redirected: the database
+    # and the logs scale with the text, and a measured run with 180 KB of it
+    # wrote 920 KB of state. Under the limit today, over it at the largest
+    # input this plugin accepts, so the limit is raised for goose alone.
+    # Everything it bounds lands in the directory that is deleted, so what it
+    # bounds is the disk for three minutes, not what survives the run.
+    local wd
+    wd="$(dirname -- "$outfile")"
+    [[ -d "$wd" ]] || return 1
+    #
+    # GOOSE_TELEMETRY_OFF: a throwaway run has no business reporting itself,
+    # and goose asks for telemetry consent on first use. Measured on 1.51.0 a
+    # run without a terminal does not stop for that question, so this is not
+    # what keeps the panel working today; it is what keeps a run quiet on a
+    # machine that said yes, and keeps the question from ever reaching a run
+    # that cannot answer it.
+    FILE_LIMIT=8192
+    CMD=(env XDG_DATA_HOME="$wd/data" XDG_STATE_HOME="$wd/state" GOOSE_MODE=chat
+      GOOSE_TELEMETRY_OFF=1
+      goose run --no-profile --no-session --quiet -i -)
     ;;
   *)
     return 1
@@ -346,7 +442,7 @@ build_command() {
 # there and missing here would run with whatever tools it has.
 agent_supported() {
   case "$1" in
-  claude | codex | opencode | pi | omp | ori | grok | copilot) return 0 ;;
+  claude | codex | opencode | pi | omp | ori | grok | copilot | goose) return 0 ;;
   *) return 1 ;;
   esac
 }
@@ -563,9 +659,14 @@ run_transform() {
 
   CMD=()
   USE_STDIN=1
+  # An agent this plugin cannot drive is the usual reason build_command gives
+  # up, and the generic sentence covers it. An agent it does know but cannot
+  # start right now is a different thing, and the person can act on it, so
+  # that branch says what is wrong in BUILD_ERROR and this hands it over.
+  BUILD_ERROR=""
   build_command "$agent" "$prompt" "$outfile" || {
     rm -rf -- "$workdir"
-    die "Default agent $agent has no non-interactive mode this plugin knows"
+    die "${BUILD_ERROR:-Default agent $agent has no non-interactive mode this plugin knows}"
   }
 
   # Run it as a background job and wait, rather than in a command
