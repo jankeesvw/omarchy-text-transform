@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Shapes
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Text Transform: paste text, pick a transformation, get the result back.
@@ -57,8 +58,8 @@ Panel {
   // it is written as the surrogate pair rather than as the character itself.
   readonly property string iconChevron: "\udb80\udd40"
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color accent: Color.accent
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property color accent: Commons.Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // [{ name, prompt, autoCopy }], as the script hands them over.
@@ -1032,7 +1033,7 @@ Panel {
                 focus: true
 
                 readonly property var spec: Border.localOrSurfaceSpec(
-                  "popups", "border", Color.popups.border, Color.popups.border, Style.normalBorderWidth)
+                  "popups", "border", Commons.Color.popups.border, Commons.Color.popups.border, Style.normalBorderWidth)
 
                 padding: Style.spacing.hairline
                 leftPadding: Border.left(picker.spec) + Style.spacing.hairline
@@ -1044,7 +1045,7 @@ Panel {
                 implicitHeight: optionList.implicitHeight + topPadding + bottomPadding
 
                 background: BorderSurface {
-                  color: Color.popups.background
+                  color: Commons.Color.popups.background
                   borderSpec: picker.spec
                   radius: Style.cornerRadius
                 }
@@ -1164,7 +1165,7 @@ Panel {
               : (root.canRun ? "Transform (Ctrl+Enter)" : "Nothing to transform yet")
             foreground: armed ? root.foreground : Qt.darker(root.foreground, 2.0)
             hoverColor: root.busy
-              ? Color.urgent
+              ? Commons.Color.urgent
               : (armed ? root.foreground : Qt.darker(root.foreground, 2.0))
             fontFamily: root.fontFamily
             bordered: true
@@ -1342,7 +1343,7 @@ Panel {
           width: parent.width
           textFormat: Text.PlainText
           text: root.errorText !== "" ? root.errorText : root.agentProblem
-          color: Color.urgent
+          color: Commons.Color.urgent
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.Wrap
@@ -1478,7 +1479,7 @@ Panel {
                       iconText: root.iconRemove
                       tooltipText: "Remove"
                       foreground: root.foreground
-                      hoverColor: Color.urgent
+                      hoverColor: Commons.Color.urgent
                       fontFamily: root.fontFamily
                       onClicked: root.removeDraft(draftRow.index)
                       onActiveFocusChanged: {
